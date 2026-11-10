@@ -1,9 +1,9 @@
 name: Fetch internship offers
 
+# Manual trigger only: France Travail's Offres d'emploi v2 API became restricted
+# ("accessible sous conditions"), so the weekly schedule was disabled. See report.
 "on":
   workflow_dispatch: {}
-  schedule:
-    - cron: "0 7 * * 1"
 
 permissions:
   contents: write
@@ -19,8 +19,8 @@ jobs:
       - run: pip install requests
       - run: python scripts/fetch_offers.py
         env:
-          ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
-          ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
+          FRANCETRAVAIL_CLIENT_ID: ${{ secrets.FRANCETRAVAIL_CLIENT_ID }}
+          FRANCETRAVAIL_CLIENT_SECRET: ${{ secrets.FRANCETRAVAIL_CLIENT_SECRET }}
       - name: Commit updated offers
         run: |
           git config user.name "github-actions[bot]"
