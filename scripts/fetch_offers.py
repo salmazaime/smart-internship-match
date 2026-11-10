@@ -10,8 +10,8 @@ TOKEN_URL = "https://entreprise.francetravail.fr/connexion/oauth2/access_token?r
 SEARCH_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
 REFERENTIEL_CONTRATS_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2/referentiel/typesContrats"
 
-CLIENT_ID = os.environ["FRANCETRAVAIL_CLIENT_ID"]
-CLIENT_SECRET = os.environ["FRANCETRAVAIL_CLIENT_SECRET"]
+CLIENT_ID = os.environ["FRANCETRAVAIL_CLIENT_ID"].strip()
+CLIENT_SECRET = os.environ["FRANCETRAVAIL_CLIENT_SECRET"].strip()
 SCOPE = "api_offresdemploiv2 o2dsoffre"
 
 # Edit this to your own search. No commune/distance filter = nationwide.
