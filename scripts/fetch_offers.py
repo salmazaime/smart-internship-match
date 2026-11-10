@@ -12,6 +12,7 @@ REFERENTIEL_CONTRATS_URL = "https://api.francetravail.io/partenaire/offresdemplo
 
 CLIENT_ID = os.environ["FRANCETRAVAIL_CLIENT_ID"].strip()
 CLIENT_SECRET = os.environ["FRANCETRAVAIL_CLIENT_SECRET"].strip()
+print("DEBUG id length:", len(CLIENT_ID), "| id starts with:", CLIENT_ID[:4], "| secret length:", len(CLIENT_SECRET))
 SCOPE = "api_offresdemploiv2 o2dsoffre"
 
 # Edit this to your own search. No commune/distance filter = nationwide.
