@@ -1,0 +1,27 @@
+name: Monitor search
+
+"on":
+  workflow_dispatch: {}
+  schedule:
+    - cron: "41 7 * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run monitoring check
+        run: python scripts/monitor_search.py
+      - name: Commit history
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/data/monitoring.json
+          git commit -m "Monitoring run [automated]" || echo "Nothing to commit"
+          git push
