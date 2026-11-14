@@ -1,34 +1,159 @@
-name: Fetch internship offers
+import json, os, sys, time
+import requests
 
-"on":
-  workflow_dispatch: {}
-  schedule:
-    - cron: "0 7 * * 1"
+# France Travail "Offres d'emploi v2" API -- OAuth2 client_credentials flow.
+# The auth flow below (token endpoint, client_credentials, scope) was confirmed
+# working against a real account. The typeContrat filter went through two
+# failed real attempts: first a hardcoded guess ("STA"), rejected by the API;
+# then a lookup against the API's own referentiel/typesContrats endpoint,
+# which DID work but returned the real, authoritative list of contract-type
+# codes -- CCE, CDD, CDI, DDI, DIN, FRA, LIB, MIS, REP, SAI, TTI, DDT -- and
+# none of them is "stage". That's not a bug to route around; it reflects a
+# real legal distinction in France: a "stage" is governed by a school
+# "convention de stage", not an employment contract, so it may not live in
+# this employment-offers API's contract-type taxonomy at all.
+#
+# Rather than guess a third field name, this version does not depend on any
+# exact categorical match existing. It searches by keyword instead (motsCles
+# does full-text matching over title and description, and real internship
+# postings reliably say "stage" or "stagiaire" in their text) and treats a
+# contract-type filter as optional, best-effort enrichment: it tries to find
+# a "stage"-labeled code in the referentiel and applies it only if one
+# exists, logging clearly either way instead of crashing.
 
-permissions:
-  contents: write
+TOKEN_URL = "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=/partenaire"
+SEARCH_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
+REFERENTIEL_CONTRATS_URL = "https://api.francetravail.io/partenaire/offresdemploi/v2/referentiel/typesContrats"
 
-jobs:
-  fetch:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - run: pip install requests
-      # France Travail "Offres d'emploi v2" is no longer offered to new applications:
-      # the step is kept so it works again when the API is available, but never blocks.
-      - name: Fetch France Travail offers
-        continue-on-error: true
-        run: python scripts/fetch_offers.py
-        env:
-          FRANCETRAVAIL_CLIENT_ID: ${{ secrets.FRANCETRAVAIL_CLIENT_ID }}
-          FRANCETRAVAIL_CLIENT_SECRET: ${{ secrets.FRANCETRAVAIL_CLIENT_SECRET }}
-      - name: Commit updated offers
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [ -f data/offers/raw_offers.json ]; then git add data/offers/raw_offers.json; fi
-          git commit -m "Fetch latest offers [automated]" || echo "Nothing to commit"
-          git push
+CLIENT_ID = os.environ["FRANCETRAVAIL_CLIENT_ID"]
+CLIENT_SECRET = os.environ["FRANCETRAVAIL_CLIENT_SECRET"]
+SCOPE = "api_offresdemploiv2 o2dsoffre"
+
+# Edit this to your own search. Two defaults worth calling out:
+# - motsCles targets computer engineering ("informatique"), not data specifically
+#   -- ENSIM students are computer engineers generally, and "data stage" alone
+#   was too narrow (it returned zero results on a real run: HTTP 204, no
+#   offers matched that exact combination for one city).
+# - No commune/distance filter is set, so the search is nationwide by
+#   default -- this API's own docs list both as optional location filters, and
+#   omitting an optional filter should broaden rather than restrict results
+#   (standard REST search semantics), though that specific behavior hasn't
+#   been verified against this API in a real run yet. If you want to restrict
+#   to a region instead, add back "commune": "<INSEE code>" and "distance":
+#   "<km>" -- see Step 10 for what to check if that changes the result count
+#   unexpectedly.
+SEARCH_PARAMS = {
+    "motsCles": "stage informatique",
+    "sort": "1",                 # sort by date, most recent first
+    "range": "0-49",             # first 50 results; see note below for more
+}
+
+def get_access_token(retries=4, backoff=5):
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.post(
+                TOKEN_URL,
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": CLIENT_ID,
+                    "client_secret": CLIENT_SECRET,
+                    "scope": SCOPE,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=(10, 20),
+            )
+            resp.raise_for_status()
+            return resp.json()["access_token"]
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            print(f"  token request attempt {attempt}/{retries} failed: {e}")
+            if hasattr(e, "response") and e.response is not None:
+                print(f"  response body: {e.response.text[:500]}")
+            if attempt < retries:
+                time.sleep(backoff * attempt)
+    raise RuntimeError(f"Could not obtain access token after {retries} attempts") from last_error
+
+def try_resolve_contract_type_code(token, label_substring="stage"):
+    """Best-effort only: look up a typeContrat code matching label_substring
+    from France Travail's own referentiel endpoint. Returns None (never
+    raises) if the endpoint is unreachable or no match exists -- confirmed by
+    real testing that "stage" has no match in this taxonomy at all, which is
+    an honest fact about the data (see the module docstring above), not a
+    failure to fix. main() falls back to keyword-only search when this
+    returns None."""
+    try:
+        resp = requests.get(
+            REFERENTIEL_CONTRATS_URL,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=(10, 20),
+        )
+        resp.raise_for_status()
+        all_types = resp.json()
+        print("Available contract types:", json.dumps(all_types, ensure_ascii=False))
+        for t in all_types:
+            if label_substring.lower() in t.get("libelle", "").lower():
+                print(f"Resolved '{label_substring}' -> code '{t['code']}' ({t['libelle']})")
+                return t["code"]
+        print(f"No contract type matches '{label_substring}' -- proceeding with keyword search only "
+              f"(this is expected: 'stage' is not part of this API's contract-type taxonomy).")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Could not fetch contract-type referentiel ({e}) -- proceeding with keyword search only.")
+        return None
+
+def search_offers(token, retries=4, backoff=5):
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(
+                SEARCH_URL,
+                params=SEARCH_PARAMS,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=(10, 30),
+            )
+            print(f"  search attempt {attempt}/{retries}: HTTP {resp.status_code}, "
+                  f"body starts with: {resp.text[:200]!r}")
+            # This API returns 206 (Partial Content) with a Content-Range header
+            # on a normal successful paginated response, and 204 (No Content,
+            # empty body) when the search matched zero offers -- both are
+            # success, not errors, and 204 must be handled before trying to
+            # parse a body that doesn't exist. Anything else is a real error.
+            if resp.status_code == 204:
+                return {"resultats": []}
+            if resp.status_code not in (200, 206):
+                resp.raise_for_status()
+            return resp.json()
+        except requests.exceptions.RequestException as e:
+            last_error = e
+            print(f"  search attempt {attempt}/{retries} failed: {e}")
+            if hasattr(e, "response") and e.response is not None:
+                print(f"  response body: {e.response.text[:500]}")
+            if attempt < retries:
+                time.sleep(backoff * attempt)
+    raise RuntimeError(f"Could not search offers after {retries} attempts") from last_error
+
+def main():
+    print("Requesting access token...")
+    token = get_access_token()
+
+    print("Checking whether a 'stage' contract type code exists...")
+    code = try_resolve_contract_type_code(token, "stage")
+    if code:
+        SEARCH_PARAMS["typeContrat"] = code
+
+    print("Got token, searching offers...")
+    data = search_offers(token)
+    offers = data.get("resultats", [])
+    print(f"Found {len(offers)} offers")
+
+    os.makedirs("data/offers", exist_ok=True)
+    with open("data/offers/raw_offers.json", "w") as f:
+        json.dump({"fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                   "search_params": SEARCH_PARAMS, "offers": offers}, f, indent=2, ensure_ascii=False)
+    print("Wrote data/offers/raw_offers.json")
+    if offers:
+        print("First offer preview:", json.dumps(offers[0], ensure_ascii=False, indent=2)[:800])
+
+if __name__ == "__main__":
+    main()
