@@ -1,0 +1,14 @@
+{
+  "runs": [
+    {
+      "run_at": "2026-11-14T20:30:47Z",
+      "trigger": "workflow_dispatch",
+      "tracked": 3,
+      "applications_sent": 0,
+      "response_rate_pct": null,
+      "feasible_offers": 9,
+      "alerts": [],
+      "status": "OK"
+    }
+  ]
+}
