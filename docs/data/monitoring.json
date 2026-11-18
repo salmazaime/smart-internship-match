@@ -49,6 +49,16 @@
       "feasible_offers": 9,
       "alerts": [],
       "status": "OK"
+    },
+    {
+      "run_at": "2026-11-18T16:43:11Z",
+      "trigger": "schedule",
+      "tracked": 3,
+      "applications_sent": 0,
+      "response_rate_pct": null,
+      "feasible_offers": 9,
+      "alerts": [],
+      "status": "OK"
     }
   ]
 }
