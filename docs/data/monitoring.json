@@ -97,6 +97,20 @@
         "M1 offer_03: top-3 offer not applied after 7 days"
       ],
       "status": "ALERT"
+    },
+    {
+      "run_at": "2026-11-22T15:40:52Z",
+      "trigger": "schedule",
+      "tracked": 3,
+      "applications_sent": 0,
+      "response_rate_pct": null,
+      "feasible_offers": 9,
+      "alerts": [
+        "M1 offer_01: top-3 offer not applied after 8 days",
+        "M1 offer_02: top-3 offer not applied after 8 days",
+        "M1 offer_03: top-3 offer not applied after 8 days"
+      ],
+      "status": "ALERT"
     }
   ]
 }
